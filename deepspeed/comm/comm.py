@@ -626,46 +626,81 @@ def init_distributed(dist_backend=None,
             # Create a torch backend object, initialize torch distributed, and assign to cdb
             cdb = TorchBackend(dist_backend, timeout, init_method, rank, world_size)
 
+def env2int(env_list, default=-1):
+    for e in env_list:
+        val = int(os.environ.get(e, -1))
+        if val >= 0: return val
+    return default
 
 def mpi_discovery(distributed_port=TORCH_DISTRIBUTED_DEFAULT_PORT, verbose=True):
     '''
     Discovery MPI environment via mpi4py and map to relevant dist state
     '''
-    from mpi4py import MPI
-    import subprocess
-    comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()
-    world_size = comm.Get_size()
+    # discover rank/size info from env
+    if 'MASTER_PORT' not in os.environ:
+        os.environ['MASTER_PORT'] = str(TORCH_DISTRIBUTED_DEFAULT_PORT)
+    # if 'MASTER_ADDR' not in os.environ:
+    #     try:
+    #         from mpi4py import MPI
+    #     except ModuleNotFoundError:
+    #         print(
+    #             "Cannot import mpi4py and MASTER_ADDR not set. Please either install mpi4py or set the MASTER_ADDR on all ranks"
+    #         )
+    #         raise Exception
+    #     import subprocess
+    #     comm = MPI.COMM_WORLD
+    #     rank = comm.Get_rank()
+    #     master_addr = None
+    #     if rank == 0:
+    #         hostname_cmd = ["hostname -I"]
+    #         result = subprocess.check_output(hostname_cmd, shell=True)
+    #         master_addr = result.decode('utf-8').split()[0]
+    #     master_addr = comm.bcast(master_addr, root=0)
+    #     os.environ['MASTER_ADDR'] = master_addr
+    local_rank = env2int(
+        ['LOCAL_RANK', 'MPI_LOCALRANKID', 'OMPI_COMM_WORLD_LOCAL_RANK', 'MV2_COMM_WORLD_LOCAL_RANK', 'SLURM_LOCALID'])
+    if 'LOCAL_RANK' not in os.environ:
+        os.environ['LOCAL_RANK'] = str(local_rank)
+    rank = env2int(['RANK', 'MPI_RANKID', 'OMPI_COMM_WORLD_RANK', 'MV2_COMM_WORLD_RANK', 'SLURM_PROCID'])
+    if 'RANK' not in os.environ:
+        os.environ['RANK'] = str(rank)
+    world_size = env2int(['WORLD_SIZE', 'OMPI_COMM_WORLD_SIZE', 'MV2_COMM_WORLD_SIZE', 'SLURM_NPROCS'])
+    if 'WORLD_SIZE' not in os.environ:
+        os.environ['WORLD_SIZE'] = str(world_size)
 
-    master_addr = None
-    if rank == 0:
-        hostname_cmd = ["hostname -I"]
-        result = subprocess.check_output(hostname_cmd, shell=True)
-        master_addr = result.decode('utf-8').split()[0]
-    master_addr = comm.bcast(master_addr, root=0)
+    # from mpi4py import MPI
+    # import subprocess
+    # comm = MPI.COMM_WORLD
+    # rank = comm.Get_rank()
+    # world_size = comm.Get_size()
 
-    # Determine local rank by assuming hostnames are unique
-    proc_name = MPI.Get_processor_name()
-    all_procs = comm.allgather(proc_name)
-    local_rank = sum([i == proc_name for i in all_procs[:rank]])
+    # master_addr = None
+    # if rank == 0:
+    #     hostname_cmd = ["hostname -I"]
+    #     result = subprocess.check_output(hostname_cmd, shell=True)
+    #     master_addr = result.decode('utf-8').split()[0]
+    # master_addr = comm.bcast(master_addr, root=0)
 
-    os.environ['RANK'] = str(rank)
-    os.environ['WORLD_SIZE'] = str(world_size)
-    os.environ['LOCAL_RANK'] = str(local_rank)
-    os.environ['MASTER_ADDR'] = master_addr
-    os.environ['MASTER_PORT'] = str(distributed_port)
+    # # Determine local rank by assuming hostnames are unique
+    # proc_name = MPI.Get_processor_name()
+    # all_procs = comm.allgather(proc_name)
+    # local_rank = sum([i == proc_name for i in all_procs[:rank]])
 
-    if verbose:
-        utils.logger.info(
-            "Discovered MPI settings of world_rank={}, local_rank={}, world_size={}, master_addr={}, master_port={}".
-            format(os.environ['RANK'], os.environ['LOCAL_RANK'], os.environ['WORLD_SIZE'], os.environ['MASTER_ADDR'],
-                   os.environ['MASTER_PORT']))
+    # os.environ['RANK'] = str(rank)
+    # os.environ['WORLD_SIZE'] = str(world_size)
+    # os.environ['LOCAL_RANK'] = str(local_rank)
+    # os.environ['MASTER_ADDR'] = master_addr
+    # os.environ['MASTER_PORT'] = str(distributed_port)
+    # if verbose:
+    #     utils.logger.info(
+    #         "Discovered MPI settings of world_rank={}, local_rank={}, world_size={}, master_addr={}, master_port={}".
+    #         format(os.environ['RANK'], os.environ['LOCAL_RANK'], os.environ['WORLD_SIZE'], os.environ['MASTER_ADDR'],
+    #                os.environ['MASTER_PORT']))
 
     if cdb is not None and cdb.is_initialized():
         assert cdb.get_rank() == rank, "MPI rank {} does not match torch rank {}".format(rank, cdb.get_rank())
         assert cdb.get_world_size() == world_size, "MPI world size {} does not match torch world size {}".format(
             world_size, cdb.get_world_size())
-
 
 def in_aml():
     # Are we running inside an Azure Machine Learning (AML) environment?

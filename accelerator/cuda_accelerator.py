@@ -20,7 +20,7 @@ class CUDA_Accelerator(DeepSpeedAccelerator):
 
     def __init__(self):
         self._name = 'cuda'
-        self._communication_backend_name = 'nccl'
+        self._communication_backend_name = 'mpi'
 
     def is_synchronized_device(self):
         return False
